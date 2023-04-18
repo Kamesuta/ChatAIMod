@@ -1,9 +1,12 @@
 package com.kamesuta.chataimod;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.player.ClientPlayerEntity;
+import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.StringTextComponent;
 import net.minecraft.util.text.event.ClickEvent;
 import net.minecraft.util.text.event.HoverEvent;
+import net.minecraftforge.client.event.ClientChatEvent;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -36,6 +39,9 @@ public class ChatAIMod {
     // スレッドプール
     private static final ExecutorService executor = Executors.newFixedThreadPool(8);
 
+    // 途中経過を表示するための任意のチャットID
+    private static final int CHAT_ID = 378346;
+
     public ChatAIMod() {
         // クライアント初期化時イベント
         FMLJavaModLoadingContext.get().getModEventBus().addListener(this::doClientStuff);
@@ -51,7 +57,7 @@ public class ChatAIMod {
     }
 
     // 同期通信でAIを呼び出す
-    private static String requestAI(String name, String text) throws Exception {
+    private static String requestAI(String text) throws Exception {
         String hostname = Config.BACKEND_IP.get();
         //String hostname = "localhost";// Pythonサーバーのホスト名
         int port = Config.BACKEND_PORT.get();
@@ -62,7 +68,7 @@ public class ChatAIMod {
         // データの送信
         OutputStream output = socket.getOutputStream();
         PrintWriter writer = new PrintWriter(new OutputStreamWriter(output, StandardCharsets.UTF_8), true);
-        writer.println(name + "\0" + text);
+        writer.println(text);
 
         // データの受信
         InputStream input = socket.getInputStream();
@@ -78,37 +84,40 @@ public class ChatAIMod {
     }
 
     // 別スレッドでAIを呼び出す
-    private static void requestAIAsync(String name, String text, Consumer<String> callback) {
+    private static void requestAIAsync(String text, Consumer<String> callback, Consumer<Exception> error) {
         executor.submit(() -> {
             try {
                 // AIを呼び出す
-                String result = requestAI(name, text);
+                String result = requestAI(text);
                 // コールバック
                 callback.accept(result);
             } catch (Exception e) {
-                LOGGER.error("AI通信エラー", e);
+                // エラー
+                error.accept(e);
             }
         });
     }
 
+    // チャットを送信する際に呼び出される
     @SubscribeEvent
-    public void onChatReceived(ClientChatReceivedEvent event) {
-        // do something when the server starts
-        LOGGER.info(event.getMessage().getString());
+    public void onChatSend(ClientChatEvent event) {
+        String inputText = event.getMessage();
+        // 「#」で始まるチャットはAIを呼び出す
+        if (inputText.startsWith("#")) {
+            // チャットをキャンセル
+            event.setCanceled(true);
 
-        // チャットが来たらAIを呼び出す
-        // チャットは「<Kamesuta> aaa」のような形式なので、正規表現で抽出する
-        String text = event.getMessage().getString();
-        Matcher matcher = REGEX.matcher(text);
-        if (matcher.matches()) {
-            // 正規表現でグループ抽出
-            String name = matcher.group(1);
-            String message = matcher.group(2);
+            // リクエスト中を表示
+            Minecraft.getInstance().ingameGUI.getChatGUI().printChatMessageWithOptionalDeletion(
+                    new StringTextComponent(" -> AIリクエスト中..."), CHAT_ID);
 
             // AIを呼び出す
-            requestAIAsync(name, message, (result) -> {
+            requestAIAsync(inputText.substring(1), (result) -> {
                 // チャットコンポーネント生成
                 StringTextComponent component = new StringTextComponent(" -> " + result);
+
+                // リクエスト中を削除
+                Minecraft.getInstance().ingameGUI.getChatGUI().deleteChatLine(CHAT_ID);
 
                 // スタイルを設定
                 component.setStyle(component.getStyle()
@@ -120,7 +129,50 @@ public class ChatAIMod {
 
                 // AIからの応答をチャットに表示する
                 Minecraft.getInstance().ingameGUI.getChatGUI().printChatMessage(component);
+            }, (e) -> {
+                // リクエスト中を削除
+                Minecraft.getInstance().ingameGUI.getChatGUI().deleteChatLine(CHAT_ID);
+
+                // エラーを表示
+                LOGGER.error("AI呼び出しエラー", e);
+                Minecraft.getInstance().ingameGUI.getChatGUI().printChatMessage(new StringTextComponent(" -> AI呼び出しエラー"));
             });
+        }
+    }
+
+    // チャットを受信する際に呼び出される
+    @SubscribeEvent
+    public void onChatReceived(ClientChatReceivedEvent event) {
+        // チャットが来たらAIを呼び出す
+        // チャットは「<Kamesuta> aaa」のような形式なので、正規表現で抽出する
+        String text = event.getMessage().getString();
+        Matcher matcher = REGEX.matcher(text);
+        if (matcher.matches()) {
+            // 正規表現でグループ抽出
+            String inputName = matcher.group(1);
+            String inputText = matcher.group(2);
+
+            // 自分は除外
+            ClientPlayerEntity player = Minecraft.getInstance().player;
+            if (player != null && inputName.equals(player.getName().getString())) {
+                return;
+            }
+
+            // メッセージを書き換え
+            ITextComponent message = event.getMessage();
+            // ボタンを作成
+            StringTextComponent button = new StringTextComponent("[+AI]");
+            button.setStyle(button.getStyle()
+                    .setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "#" + text))
+                    .setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new StringTextComponent("AIを呼び出す")))
+            );
+            // メッセージの最後にボタンを追加したメッセージを作成
+            ITextComponent newMessage = new StringTextComponent("")
+                    .appendSibling(message)
+                    .appendSibling(new StringTextComponent(" "))
+                    .appendSibling(button);
+            // メッセージを書き換え
+            event.setMessage(newMessage);
         }
     }
 }
