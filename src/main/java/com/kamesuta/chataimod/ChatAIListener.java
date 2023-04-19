@@ -68,7 +68,7 @@ public class ChatAIListener {
             // 正規表現でグループ抽出
             String inputName = matcher.group(1);
             String inputText = matcher.group(2);
-
+            String setText = inputName+"\0"+inputText;
             // 自分は除外
             ClientPlayerEntity player = Minecraft.getInstance().player;
             if (player != null && inputName.equals(player.getName().getString())) {
@@ -80,7 +80,7 @@ public class ChatAIListener {
             // ボタンを作成
             StringTextComponent button = new StringTextComponent("[+AI]");
             button.setStyle(button.getStyle()
-                    .setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "#" + text))
+                    .setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "#" + setText))
                     .setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new StringTextComponent("AIを呼び出す")))
             );
             // メッセージの最後にボタンを追加したメッセージを作成
