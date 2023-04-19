@@ -5,11 +5,9 @@ import com.electronwill.nightconfig.core.io.WritingMode;
 import net.minecraftforge.common.ForgeConfigSpec;
 import net.minecraftforge.common.ForgeConfigSpec.Builder;
 import net.minecraftforge.common.ForgeConfigSpec.IntValue;
-import net.minecraftforge.fml.common.Mod;
 
 import java.io.File;
 
-@Mod("chataimod")
 public class Config {
     public static ForgeConfigSpec CLIENT_CONFIG;
 
