@@ -1,13 +1,17 @@
 package com.kamesuta.chataimod;
 
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import net.minecraft.client.GuiMessageTag;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.entity.player.ClientPlayerEntity;
-import net.minecraft.util.text.ITextComponent;
-import net.minecraft.util.text.StringTextComponent;
-import net.minecraft.util.text.event.ClickEvent;
-import net.minecraft.util.text.event.HoverEvent;
+import net.minecraft.client.gui.components.ChatComponent;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.*;
 import net.minecraftforge.client.event.ClientChatEvent;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
+import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 
 import java.util.regex.Matcher;
@@ -24,37 +28,73 @@ public class ChatAIListener {
             // チャットをキャンセル
             event.setCanceled(true);
 
-            // リクエスト中を表示
-            Minecraft.getInstance().ingameGUI.getChatGUI().printChatMessageWithOptionalDeletion(
-                    new StringTextComponent(" -> AIリクエスト中..."), ChatAI.CHAT_ID);
-
-            // AIを呼び出す
-            requestAIAsync(inputText.substring(1), (result) -> {
-                // チャットコンポーネント生成
-                StringTextComponent component = new StringTextComponent(" -> " + result);
-
-                // リクエスト中を削除
-                Minecraft.getInstance().ingameGUI.getChatGUI().deleteChatLine(ChatAI.CHAT_ID);
-
-                // スタイルを設定
-                component.setStyle(component.getStyle()
-                        // クリックイベントを設定
-                        .setClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, result))
-                        // ホバーイベントを設定
-                        .setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new StringTextComponent("クリックでチャット欄に挿入")))
-                );
-
-                // AIからの応答をチャットに表示する
-                Minecraft.getInstance().ingameGUI.getChatGUI().printChatMessage(component);
-            }, (e) -> {
-                // リクエスト中を削除
-                Minecraft.getInstance().ingameGUI.getChatGUI().deleteChatLine(ChatAI.CHAT_ID);
-
-                // エラーを表示
-                ChatAIMod.LOGGER.error("AI呼び出しエラー", e);
-                Minecraft.getInstance().ingameGUI.getChatGUI().printChatMessage(new StringTextComponent(" -> AI呼び出しエラー"));
-            });
+            onRequestAI(inputText);
         }
+    }
+
+    /**
+     * チャットを消す
+     */
+    private void deleteMessage() {
+        ChatComponent chat = Minecraft.getInstance().gui.getChat();
+        chat.allMessages.removeIf(message -> ChatAI.CHAT_ID.equals(message.signature()));
+        chat.refreshTrimmedMessage();
+    }
+
+    /**
+     * AIを呼び出す
+     *
+     * @param inputText チャットのテキスト
+     */
+    private void onRequestAI(String inputText) {
+        // リクエスト中を表示
+        deleteMessage();
+        Minecraft.getInstance().gui.getChat().addMessage(
+                Component.literal(" -> AIリクエスト中..."), ChatAI.CHAT_ID, GuiMessageTag.system());
+
+        // AIを呼び出す
+        requestAIAsync(inputText.substring(1), (result) -> {
+            // チャットコンポーネント生成
+            MutableComponent component = Component.literal(" -> " + result);
+
+            // リクエスト中を削除
+            deleteMessage();
+
+            // スタイルを設定
+            component.setStyle(component.getStyle()
+                    // クリックイベントを設定
+                    .withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, result))
+                    // ホバーイベントを設定
+                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("クリックでチャット欄に挿入")))
+            );
+
+            // AIからの応答をチャットに表示する
+            Minecraft.getInstance().gui.getChat().addMessage(component, null, GuiMessageTag.system());
+        }, (e) -> {
+            // リクエスト中を削除
+            deleteMessage();
+
+            // エラーを表示
+            ChatAIMod.LOGGER.error("AI呼び出しエラー", e);
+            Minecraft.getInstance().gui.getChat().addMessage(Component.literal(" -> AI呼び出しエラー"), null, GuiMessageTag.system());
+        });
+    }
+
+    // クライアントコマンドを登録する
+    @SubscribeEvent
+    public void onRegisterClientCommands(RegisterClientCommandsEvent event) {
+        // aiコマンドを登録
+        LiteralArgumentBuilder<CommandSourceStack> aiCommand = Commands.literal("ai")
+                .requires((commandSource) -> commandSource.hasPermission(0))
+                .then(Commands.argument("text", StringArgumentType.greedyString())
+                        .executes((commandSource) -> {
+                            // aiコマンドを実行
+                            String inputText = StringArgumentType.getString(commandSource, "text");
+                            onRequestAI(inputText);
+                            return 0;
+                        })
+                );
+        event.getDispatcher().register(aiCommand);
     }
 
     // チャットを受信する際に呼び出される
@@ -70,24 +110,24 @@ public class ChatAIListener {
             String inputText = matcher.group(2);
 
             // 自分は除外
-            ClientPlayerEntity player = Minecraft.getInstance().player;
+            LocalPlayer player = Minecraft.getInstance().player;
             if (player != null && inputName.equals(player.getName().getString())) {
                 return;
             }
 
             // メッセージを書き換え
-            ITextComponent message = event.getMessage();
+            Component message = event.getMessage();
             // ボタンを作成
-            StringTextComponent button = new StringTextComponent("[+AI]");
-            button.setStyle(button.getStyle()
-                    .setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "#" + text))
-                    .setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new StringTextComponent("AIを呼び出す")))
-            );
+            MutableComponent button = Component.literal("[+AI]")
+                    .setStyle(Style.EMPTY
+                            .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/ai " + text))
+                            .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal("AIを呼び出す")))
+                    );
             // メッセージの最後にボタンを追加したメッセージを作成
-            ITextComponent newMessage = new StringTextComponent("")
-                    .appendSibling(message)
-                    .appendSibling(new StringTextComponent(" "))
-                    .appendSibling(button);
+            Component newMessage = Component.literal("")
+                    .append(message)
+                    .append(Component.literal(" "))
+                    .append(button);
             // メッセージを書き換え
             event.setMessage(newMessage);
         }

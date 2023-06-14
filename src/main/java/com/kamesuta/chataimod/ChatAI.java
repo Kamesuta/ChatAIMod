@@ -1,8 +1,11 @@
 package com.kamesuta.chataimod;
 
+import net.minecraft.network.chat.MessageSignature;
+
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -13,7 +16,7 @@ public class ChatAI {
     public static final Pattern REGEX = Pattern.compile("^<(.+?)> (.+)$");
 
     // 途中経過を表示するための任意のチャットID
-    public static final int CHAT_ID = 378346;
+    public static final MessageSignature CHAT_ID = new MessageSignature(Arrays.copyOf(new byte[]{3, 7, 8, 3, 4, 6}, MessageSignature.BYTES));
 
     // スレッドプール
     private static final ExecutorService executor = Executors.newFixedThreadPool(8);
